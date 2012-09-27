@@ -1,0 +1,378 @@
+diff -r -U3 redmine-2.0/htdocs/app/controllers/issues_controller.rb redmine/htdocs/app/controllers/issues_controller.rb
+--- redmine-2.0/htdocs/app/controllers/issues_controller.rb	2012-05-15 00:20:30.000000000 +0200
++++ redmine/htdocs/app/controllers/issues_controller.rb	2012-07-27 11:03:32.000000000 +0200
+@@ -86,7 +86,7 @@
+         }
+         format.atom { render_feed(@issues, :title => "#{@project || Setting.app_title}: #{l(:label_issue_plural)}") }
+         format.csv  { send_data(issues_to_csv(@issues, @project, @query, params), :type => 'text/csv; header=present', :filename => 'export.csv') }
+-        format.pdf  { send_data(issues_to_pdf(@issues, @project, @query), :type => 'application/pdf', :filename => 'export.pdf') }
++        format.pdf  { send_data(issues_to_dispatch(@issues, @project, @query), :type => 'application/pdf', :filename => 'export.pdf') }
+       end
+     else
+       respond_to do |format|
+@@ -119,7 +119,7 @@
+       }
+       format.api
+       format.atom { render :template => 'journals/index', :layout => false, :content_type => 'application/atom+xml' }
+-      format.pdf  { send_data(issue_to_pdf(@issue), :type => 'application/pdf', :filename => "#{@project.identifier}-#{@issue.id}.pdf") }
++      format.pdf  { send_data(issue_to_report_dispatch(@issue), :type => 'application/pdf', :filename => "#{@project.identifier}-#{@issue.id}.pdf") }
+     end
+   end
+ 
+diff -r -U3 redmine-2.0/htdocs/app/views/issues/index.html.erb redmine/htdocs/app/views/issues/index.html.erb
+--- redmine-2.0/htdocs/app/views/issues/index.html.erb	2012-05-15 00:20:32.000000000 +0200
++++ redmine/htdocs/app/views/issues/index.html.erb	2012-07-27 11:03:32.000000000 +0200
+@@ -63,7 +63,9 @@
+ <% other_formats_links do |f| %>
+   <%= f.link_to 'Atom', :url => params.merge(:key => User.current.rss_key) %>
+   <%= f.link_to 'CSV', :url => params, :onclick => "showModal('csv-export-options', '330px'); return false;" %>
+-  <%= f.link_to 'PDF', :url => params %>
++  <%= f.link_to 'PDF', :url => params.merge(:outputType => 'summary') %>
++  <%= f.link_to_alias 'PDF', 'Full PDF', :url => params.merge(:outputType => 'full') %>
++  <%= f.link_to_alias 'PDF', 'Report', :url => params.merge(:outputType => 'full', :report => '1') %>
+ <% end %>
+ 
+ <div id="csv-export-options" style="display:none;">
+diff -r -U3 redmine-2.0/htdocs/app/views/issues/show.html.erb redmine/htdocs/app/views/issues/show.html.erb
+--- redmine-2.0/htdocs/app/views/issues/show.html.erb	2012-05-15 00:20:32.000000000 +0200
++++ redmine/htdocs/app/views/issues/show.html.erb	2012-07-27 11:03:32.000000000 +0200
+@@ -133,6 +133,7 @@
+ <% other_formats_links do |f| %>
+   <%= f.link_to 'Atom', :url => {:key => User.current.rss_key} %>
+   <%= f.link_to 'PDF' %>
++  <%= f.link_to_alias 'PDF', 'Report', :url => params.merge(:report => '1') %>
+ <% end %>
+ 
+ <% html_title "#{@issue.tracker.name} ##{@issue.id}: #{@issue.subject}" %>
+diff -r -U3 redmine-2.0/htdocs/lib/redmine/export/pdf.rb redmine/htdocs/lib/redmine/export/pdf.rb
+--- redmine-2.0/htdocs/lib/redmine/export/pdf.rb	2012-05-15 00:20:53.000000000 +0200
++++ redmine/htdocs/lib/redmine/export/pdf.rb	2012-08-20 08:27:35.000000000 +0200
+@@ -47,8 +47,8 @@
+           else
+             case pdf_encoding
+             when 'UTF-8'
+-              @font_for_content = 'FreeSans'
+-              @font_for_footer  = 'FreeSans'
++              @font_for_content = 'droidsans'
++              @font_for_footer  = 'droidsans'
+             when 'CP949'
+               extend(PDF_Korean)
+               AddUHCFont()
+@@ -385,15 +385,78 @@
+         pdf.SetFillColor(255, 255, 255)
+       end
+ 
++      def issues_to_dispatch(issues, project, query)
++        # export_type is filled by view template thanks to spec_format_link_to
++        (params['report'] == '1') ? issues_to_report_dispatch(issues, project, query) : issues_to_pdf_dispatch(issues, project, query)
++      end
++
++      def issues_to_report_dispatch(issues, project, query)
++        # export_type is filled by view template thanks to spec_format_link_to
++        (params['outputType'] == 'full') ? issues_to_pdf_report(issues, project, query) : issues_to_pdf(issues, project, query)
++      end
++
++      def issues_to_pdf_dispatch(issues, project, query)
++        # export_type is filled by view template thanks to spec_format_link_to
++      (params['outputType'] == 'full') ? issues_to_pdf_full(issues, project, query) : issues_to_pdf(issues, project, query)
++      end
++
++      def issues_to_pdf_full(issues, project, query)
++        pdf = ITCPDF.new(current_language)
++        ## pdf = IFPDF.new(current_language)
++
++        title = query.new_record? ? l(:label_issue_plural) : query.name
++        title = "#{project} - #{title}" if project
++
++	 breakMargin = pdf.GetBreakMargin
++
++        issues_to_pdf_header(pdf, title, issues, project, query)
++        issues_to_pdf_content(pdf, title, issues, project, query)
++	 pdf.SetAutoPageBreak(true, breakMargin )
++
++        issues.each do |issue|
++          issue_to_pdf_content(pdf, issue)
++        end
++        pdf.Output
++     end
++
++     def issues_to_pdf_report(issues, project, query)
++        pdf = ITCPDF.new(current_language)
++        ## pdf = IFPDF.new(current_language)
++
++        title = query.new_record? ? l(:label_issue_plural) : query.name
++        title = "#{project} - #{title}" if project
++
++	 breakMargin = pdf.GetBreakMargin
++
++        issues_to_pdf_header(pdf, title, issues, project, query)
++        issues_to_pdf_content(pdf, title, issues, project, query)
++	 pdf.SetAutoPageBreak(true, breakMargin)
++
++        issues.each do |issue|
++	   issue_to_report_pdf(pdf, issue)
++        end
++        pdf.Output
++     end
++
+       # Returns a PDF string of a list of issues
+       def issues_to_pdf(issues, project, query)
+         pdf = ITCPDF.new(current_language)
++
+         title = query.new_record? ? l(:label_issue_plural) : query.name
+         title = "#{project} - #{title}" if project
++        issues_to_pdf_header(pdf, title, issues, project, query)
++        issues_to_pdf_content(pdf, title, issues, project, query)
++        pdf.Output
++      end
++
++      def issues_to_pdf_header(pdf, title, issues, project, query)
+         pdf.SetTitle(title)
+         pdf.alias_nb_pages
+         pdf.footer_date = format_date(Date.today)
+         pdf.SetAutoPageBreak(false)
++      end
++	  
++      def issues_to_pdf_content(pdf, title, issues, project, query)
+         pdf.AddPage("L")
+ 
+         # Landscape A4 = 210 x 297 mm
+@@ -460,7 +523,6 @@
+           pdf.SetFontStyle('B',10)
+           pdf.RDMCell(0, row_height, '...')
+         end
+-        pdf.Output
+       end
+ 
+       # Renders MultiCells and returns the maximum height used
+@@ -495,11 +557,34 @@
+       end
+ 
+       # Returns a PDF string of a single issue
++      def issue_to_report_dispatch(issue)
++        # export_type is filled by view template thanks to spec_format_link_to
++        (params['report'] == '1') ? issue_to_pdf_report(issue) : issue_to_pdf(issue)
++      end
++
++      def issue_to_pdf_report(issue)
++        pdf = ITCPDF.new(current_language)
++
++        issue_to_pdf_header(pdf, issue)
++        issue_to_report_pdf(pdf, issue)
++        pdf.Output
++      end
++
+       def issue_to_pdf(issue)
+         pdf = ITCPDF.new(current_language)
++
++        issue_to_pdf_header(pdf, issue)
++        issue_to_pdf_content(pdf, issue)
++        pdf.Output
++      end
++
++      def issue_to_pdf_header(pdf, issue)
+         pdf.SetTitle("#{issue.project} - ##{issue.tracker} #{issue.id}")
+         pdf.alias_nb_pages
+         pdf.footer_date = format_date(Date.today)
++      end
++
++      def issue_to_pdf_content(pdf,issue)
+         pdf.AddPage
+         pdf.SetFontStyle('B',11)
+         buf = "#{issue.project} - #{issue.tracker} # #{issue.id}"
+@@ -558,9 +643,9 @@
+ 
+         for custom_value in issue.custom_field_values
+           pdf.SetFontStyle('B',9)
+-          pdf.RDMCell(35,5, custom_value.custom_field.name + ":","L")
++          pdf.RDMCell(40,5, custom_value.custom_field.name + ":","L")
+           pdf.SetFontStyle('',9)
+-          pdf.RDMMultiCell(155,5, (show_value custom_value),"R")
++          pdf.RDMMultiCell(150,5, (show_value custom_value),"R")
+         end
+ 
+         y0 = pdf.GetY
+@@ -691,7 +776,164 @@
+             pdf.Ln
+           end
+         end
+-        pdf.Output
++      end
++
++      def issue_to_report_pdf(pdf,issue)
++        pdf.AddPage
++        pdf.SetFontStyle('B',11)
++        buf = "#{issue.project} - #{issue.tracker} # #{issue.id}"
++        pdf.RDMMultiCell(190, 5, buf)
++        pdf.Ln
++        pdf.SetFontStyle('',8)
++        base_x = pdf.GetX
++        i = 1
++        issue.ancestors.each do |ancestor|
++          pdf.SetX(base_x + i)
++          buf = "#{ancestor.tracker} # #{ancestor.id} (#{ancestor.status.to_s}): #{ancestor.subject}"
++          pdf.RDMMultiCell(190 - i, 5, buf)
++          i += 1 if i < 35
++        end
++        pdf.Ln
++
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_status) + ":","LT")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, issue.status.to_s,"RT")
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_priority) + ":","LT")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, issue.priority.to_s,"RT")
++        pdf.Ln
++
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_author) + ":","L")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, issue.author.to_s,"R")
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_category) + ":","L")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, issue.category.to_s,"R")
++        pdf.Ln
++
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_created_on) + ":","L")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, format_date(issue.created_on),"R")
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_assigned_to) + ":","L")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, issue.assigned_to.to_s,"R")
++        pdf.Ln
++
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_updated_on) + ":","LB")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, format_date(issue.updated_on),"RB")
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_due_date) + ":","LB")
++        pdf.SetFontStyle('',9)
++        pdf.RDMCell(60,5, format_date(issue.due_date),"RB")
++        pdf.Ln
++
++        y0 = pdf.GetY
++
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35,5, l(:field_subject) + ":","LT")
++        pdf.SetFontStyle('',9)
++        pdf.RDMMultiCell(155,5, issue.subject,"RT")
++        pdf.Line(pdf.GetX, y0, pdf.GetX, pdf.GetY)
++
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(35+155, 5, l(:field_description), "LRT", 1)
++        pdf.SetFontStyle('',9)
++
++        # Set resize image scale
++        pdf.SetImageScale(1.6)
++        pdf.RDMwriteHTMLCell(35+155, 5, 0, 0,
++              issue.description.to_s, issue.attachments, "LRB")
++
++        unless issue.leaf?
++          # for CJK
++          truncate_length = ( l(:general_pdf_encoding).upcase == "UTF-8" ? 90 : 65 )
++
++          pdf.SetFontStyle('B',9)
++          pdf.RDMCell(35+155,5, l(:label_subtask_plural) + ":", "LTR")
++          pdf.Ln
++          issue_list(issue.descendants.sort_by(&:lft)) do |child, level|
++            buf = truncate("#{child.tracker} # #{child.id}: #{child.subject}",
++                           :length => truncate_length)
++            level = 10 if level >= 10
++            pdf.SetFontStyle('',8)
++            pdf.RDMCell(35+135,5, (level >=1 ? "  " * level : "") + buf, "L")
++            pdf.SetFontStyle('B',8)
++            pdf.RDMCell(20,5, child.status.to_s, "R")
++            pdf.Ln
++          end
++        end
++
++        pdf.RDMCell(190,5, "", "T")
++        pdf.Ln
++
++        if issue.changesets.any? &&
++             User.current.allowed_to?(:view_changesets, issue.project)
++          pdf.SetFontStyle('B',9)
++          pdf.RDMCell(190,5, l(:label_associated_revisions), "B")
++          pdf.Ln
++          for changeset in issue.changesets
++            pdf.SetFontStyle('B',8)
++            csstr  = "#{l(:label_revision)} #{changeset.format_identifier} - "
++            csstr += format_time(changeset.committed_on) + " - " + changeset.author.to_s
++            pdf.RDMCell(190, 5, csstr)
++            pdf.Ln
++            unless changeset.comments.blank?
++              pdf.SetFontStyle('',8)
++              pdf.RDMwriteHTMLCell(190,5,0,0,
++                    changeset.comments.to_s, issue.attachments, "")
++            end
++            pdf.Ln
++          end
++        end
++
++        pdf.SetFontStyle('B',9)
++        pdf.RDMCell(190,5, l(:label_history), "B")
++        pdf.Ln
++        indice = issue.journals.size + 1
++        for journal in issue.journals.find(
++                          :all, :include => [:user, :details],
++                          :order => "#{Journal.table_name}.created_on DESC")
++          indice = indice - 1
++          pdf.SetFontStyle('B',8)
++          pdf.RDMCell(190,5,
++             "#" + indice.to_s +
++             " - " + format_time(journal.created_on) +
++             " - " + journal.user.name)
++          pdf.Ln
++          pdf.SetFontStyle('I',8)
++          details_to_strings(journal.details, true).each do |string|
++            pdf.RDMMultiCell(190,5, "- " + string)
++          end
++          if journal.notes?
++            pdf.Ln unless journal.details.empty?
++            pdf.SetFontStyle('',8)
++            pdf.RDMwriteHTMLCell(190,5,0,0,
++                  journal.notes.to_s, issue.attachments, "")
++          end
++          pdf.Ln
++        end
++
++        if issue.attachments.any?
++          pdf.SetFontStyle('B',9)
++          pdf.RDMCell(190,5, l(:label_attachment_plural), "B")
++          pdf.Ln
++          for attachment in issue.attachments
++            pdf.SetFontStyle('',8)
++            pdf.RDMCell(80,5, attachment.filename)
++            pdf.RDMCell(20,5, number_to_human_size(attachment.filesize),0,0,"R")
++            pdf.RDMCell(25,5, format_date(attachment.created_on),0,0,"R")
++            pdf.RDMCell(65,5, attachment.author.name,0,0,"R")
++            pdf.Ln
++          end
++        end
+       end
+ 
+       # Returns a PDF string of a set of wiki pages
+diff -r -U3 redmine-2.0/htdocs/lib/redmine/views/other_formats_builder.rb redmine/htdocs/lib/redmine/views/other_formats_builder.rb
+--- redmine-2.0/htdocs/lib/redmine/views/other_formats_builder.rb	2012-05-15 00:20:53.000000000 +0200
++++ redmine/htdocs/lib/redmine/views/other_formats_builder.rb	2012-07-27 11:03:32.000000000 +0200
+@@ -28,6 +28,14 @@
+         html_options = { :class => name.to_s.downcase, :rel => 'nofollow' }.merge(options)
+         @view.content_tag('span', @view.link_to(caption, url, html_options))
+       end
++
++      def link_to_alias(name, urlText, options={})
++        url = { :format => name.to_s.downcase }.merge(options.delete(:url) || {}).except('page')
++#        caption = options.delete(:caption) || name
++        caption = urlText
++        html_options = { :class => name.to_s.downcase, :rel => 'nofollow' }.merge(options)
++        @view.content_tag('span', @view.link_to(caption, url, html_options))
++      end
+     end
+   end
+ end

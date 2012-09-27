@@ -1,0 +1,1 @@
+this version of droidsans was made by merging droidsansfallback, with droidsans (normal and bold), the newest version of droidsansfallback isnt used as several gryphs broken during the merge and subsequent transform for use with redmine.

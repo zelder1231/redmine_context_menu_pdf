@@ -1,0 +1,8 @@
+h2. Context menu fullpdf
+
+Plugin adds 'pdf' button to issues' context menu, require full pdfpatch 
+
+h3. 0.0.3
+Initial release
+* Compatibility with Redmine 1.4.x
+

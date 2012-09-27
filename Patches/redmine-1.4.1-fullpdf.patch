@@ -1,0 +1,131 @@
+diff -r -U3 redmine-1.4.1/app/controllers/issues_controller.rb redmine/app/controllers/issues_controller.rb
+--- redmine-1.4.1/app/controllers/issues_controller.rb	2012-05-09 13:51:34.788701553 -0400
++++ redmine/app/controllers/issues_controller.rb	2012-05-09 21:08:17.213716451 -0400
+@@ -86,7 +86,7 @@
+         }
+         format.atom { render_feed(@issues, :title => "#{@project || Setting.app_title}: #{l(:label_issue_plural)}") }
+         format.csv  { send_data(issues_to_csv(@issues, @project, @query, params), :type => 'text/csv; header=present', :filename => 'export.csv') }
+-        format.pdf  { send_data(issues_to_pdf(@issues, @project, @query), :type => 'application/pdf', :filename => 'export.pdf') }
++        format.pdf  { send_data(issues_to_pdf_dispatch(@issues, @project, @query), :type => 'application/pdf', :filename => 'export.pdf') }
+       end
+     else
+       respond_to do |format|
+diff -r -U3 redmine-1.4.1/app/views/issues/index.html.erb redmine/app/views/issues/index.html.erb
+--- redmine-1.4.1/app/views/issues/index.html.erb	2012-05-09 13:51:34.771701096 -0400
++++ redmine/app/views/issues/index.html.erb	2012-05-09 22:14:42.338706985 -0400
+@@ -63,7 +63,8 @@
+ <% other_formats_links do |f| %>
+   <%= f.link_to 'Atom', :url => params.merge(:key => User.current.rss_key) %>
+   <%= f.link_to 'CSV', :url => params, :onclick => "showModal('csv-export-options', '330px'); return false;" %>
+-  <%= f.link_to 'PDF', :url => params %>
++  <%= f.link_to 'PDF', :url => params.merge(:outputType => 'summary') %>
++  <%= f.link_to_alias 'PDF', 'Full PDF', :url => params.merge(:outputType => 'full') %>
+ <% end %>
+ 
+ <div id="csv-export-options" style="display:none;">
+diff -r -U3 redmine-1.4.1/lib/redmine/export/pdf.rb redmine/lib/redmine/export/pdf.rb
+--- redmine-1.4.1/lib/redmine/export/pdf.rb	2012-05-09 13:52:29.643699538 -0400
++++ redmine/lib/redmine/export/pdf.rb	2012-05-09 21:08:17.214702078 -0400
+@@ -385,15 +385,48 @@
+         pdf.SetFillColor(255, 255, 255)
+       end
+ 
++      def issues_to_pdf_dispatch(issues, project, query)
++        # export_type is filled by view template thanks to spec_format_link_to
++        (params['outputType'] == 'full') ? issues_to_pdf_full(issues, project, query) : issues_to_pdf(issues, project, query)
++      end
++
++      def issues_to_pdf_full(issues, project, query)
++        pdf = ITCPDF.new(current_language)
++        ## pdf = IFPDF.new(current_language)
++
++        title = query.new_record? ? l(:label_issue_plural) : query.name
++        title = "#{project} - #{title}" if project
++
++        issues_to_pdf_header(pdf, title, issues, project, query)
++        issues_to_pdf_content(pdf, title, issues, project, query)
++        issues.each do |issue|
++          issue_to_pdf_content(pdf, issue)
++        end
++        pdf.Output
++     end
++
++
+       # Returns a PDF string of a list of issues
+       def issues_to_pdf(issues, project, query)
+         pdf = ITCPDF.new(current_language)
++
+         title = query.new_record? ? l(:label_issue_plural) : query.name
+         title = "#{project} - #{title}" if project
++
++        issues_to_pdf_header(pdf, title, issues, project, query)
++        issues_to_pdf_content(pdf, title, issues, project, query)
++        pdf.Output
++      end
++
++      def issues_to_pdf_header(pdf, title, issues, project, query)
+         pdf.SetTitle(title)
+         pdf.alias_nb_pages
+         pdf.footer_date = format_date(Date.today)
+         pdf.SetAutoPageBreak(false)
++      end
++
++
++      def issues_to_pdf_content(pdf, title, issues, project, query)
+         pdf.AddPage("L")
+ 
+         # Landscape A4 = 210 x 297 mm
+@@ -460,7 +493,6 @@
+           pdf.SetFontStyle('B',10)
+           pdf.RDMCell(0, row_height, '...')
+         end
+-        pdf.Output
+       end
+ 
+       # Renders MultiCells and returns the maximum height used
+@@ -497,9 +529,19 @@
+       # Returns a PDF string of a single issue
+       def issue_to_pdf(issue)
+         pdf = ITCPDF.new(current_language)
++
++        issue_to_pdf_header(pdf, issue)
++        issue_to_pdf_content(pdf, issue)
++        pdf.Output
++      end
++
++      def issue_to_pdf_header(pdf, issue)
+         pdf.SetTitle("#{issue.project} - ##{issue.tracker} #{issue.id}")
+         pdf.alias_nb_pages
+         pdf.footer_date = format_date(Date.today)
++      end
++
++      def issue_to_pdf_content(pdf,issue)
+         pdf.AddPage
+         pdf.SetFontStyle('B',11)
+         buf = "#{issue.project} - #{issue.tracker} # #{issue.id}"
+@@ -691,7 +733,6 @@
+             pdf.Ln
+           end
+         end
+-        pdf.Output
+       end
+ 
+       # Returns a PDF string of a set of wiki pages
+diff -r -U3 redmine-1.4.1/lib/redmine/views/other_formats_builder.rb redmine/lib/redmine/views/other_formats_builder.rb
+--- redmine-1.4.1/lib/redmine/views/other_formats_builder.rb	2012-05-09 13:52:29.623730691 -0400
++++ redmine/lib/redmine/views/other_formats_builder.rb	2012-05-09 22:05:15.210806887 -0400
+@@ -28,6 +28,14 @@
+         html_options = { :class => name.to_s.downcase, :rel => 'nofollow' }.merge(options)
+         @view.content_tag('span', @view.link_to(caption, url, html_options))
+       end
++
++      def link_to_alias(name, urlText, options={})
++        url = { :format => name.to_s.downcase }.merge(options.delete(:url) || {}).except('page')
++#        caption = options.delete(:caption) || name
++        caption = urlText
++        html_options = { :class => name.to_s.downcase, :rel => 'nofollow' }.merge(options)
++        @view.content_tag('span', @view.link_to(caption, url, html_options))
++      end
+     end
+   end
+ end
