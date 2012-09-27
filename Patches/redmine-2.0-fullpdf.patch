@@ -1,4 +1,4 @@
-diff -r -U3 redmine-2.0/htdocs/app/controllers/issues_controller.rb redmine/htdocs/app/controllers/issues_controller.rb
+diff -r -u3 redmine-2.0/htdocs/app/controllers/issues_controller.rb redmine/htdocs/app/controllers/issues_controller.rb
 --- redmine-2.0/htdocs/app/controllers/issues_controller.rb	2012-05-15 00:20:30.000000000 +0200
 +++ redmine/htdocs/app/controllers/issues_controller.rb	2012-09-26 09:24:55.374909400 +0200
 @@ -86,7 +86,7 @@
@@ -10,10 +10,10 @@ diff -r -U3 redmine-2.0/htdocs/app/controllers/issues_controller.rb redmine/htdo
        end
      else
        respond_to do |format|
-diff -r -U3 redmine-2.0/htdocs/app/views/issues/index.html.erb redmine/htdocs/app/views/issues/index.html.erb
+diff -r -u3 redmine-2.0/htdocs/app/views/issues/index.html.erb redmine/htdocs/app/views/issues/index.html.erb
 --- redmine-2.0/htdocs/app/views/issues/index.html.erb	2012-05-15 00:20:32.000000000 +0200
-+++ redmine/htdocs/app/views/issues/index.html.erb	2012-09-26 15:38:06.426339500 +0200
-@@ -63,12 +63,13 @@
++++ redmine/htdocs/app/views/issues/index.html.erb	2012-09-27 10:59:40.328349600 +0200
+@@ -63,7 +63,8 @@
  <% other_formats_links do |f| %>
    <%= f.link_to 'Atom', :url => params.merge(:key => User.current.rss_key) %>
    <%= f.link_to 'CSV', :url => params, :onclick => "showModal('csv-export-options', '330px'); return false;" %>
@@ -23,13 +23,7 @@ diff -r -U3 redmine-2.0/htdocs/app/views/issues/index.html.erb redmine/htdocs/ap
  <% end %>
  
  <div id="csv-export-options" style="display:none;">
-   <h3 class="title"><%= l(:label_export_options, :export_format => 'CSV') %></h3>
--  <%= form_tag(params.merge({:format => 'csv',:page=>nil}), :method => :get, :id => 'csv-export-form') do %>
-+  <% form_tag(params.merge({:format => 'csv',:page=>nil}), :method => :get, :id => 'csv-export-form') do %>
-   <p>
-     <label><%= radio_button_tag 'columns', '', true %> <%= l(:description_selected_columns) %></label><br />
-     <label><%= radio_button_tag 'columns', 'all' %> <%= l(:description_all_columns) %></label>
-diff -r -U3 redmine-2.0/htdocs/lib/redmine/export/pdf.rb redmine/htdocs/lib/redmine/export/pdf.rb
+diff -r -u3 redmine-2.0/htdocs/lib/redmine/export/pdf.rb redmine/htdocs/lib/redmine/export/pdf.rb
 --- redmine-2.0/htdocs/lib/redmine/export/pdf.rb	2012-05-15 00:20:53.000000000 +0200
 +++ redmine/htdocs/lib/redmine/export/pdf.rb	2012-09-26 11:01:37.395489100 +0200
 @@ -47,8 +47,8 @@
@@ -128,7 +122,7 @@ diff -r -U3 redmine-2.0/htdocs/lib/redmine/export/pdf.rb redmine/htdocs/lib/redm
        end
  
        # Returns a PDF string of a set of wiki pages
-diff -r -U3 redmine-2.0/htdocs/lib/redmine/views/other_formats_builder.rb redmine/htdocs/lib/redmine/views/other_formats_builder.rb
+diff -r -u3 redmine-2.0/htdocs/lib/redmine/views/other_formats_builder.rb redmine/htdocs/lib/redmine/views/other_formats_builder.rb
 --- redmine-2.0/htdocs/lib/redmine/views/other_formats_builder.rb	2012-05-15 00:20:53.000000000 +0200
 +++ redmine/htdocs/lib/redmine/views/other_formats_builder.rb	2012-09-26 09:26:34.936918100 +0200
 @@ -28,6 +28,14 @@
